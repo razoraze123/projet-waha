@@ -1,10 +1,13 @@
 import express from 'express';
 import makeWASocket, { useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys';
 import qrcode from 'qrcode-terminal';
+import cors from 'cors'; // <--- AJOUTÉ ICI
 
 const app = express();
 const port = 3001;
 
+// Middlewares
+app.use(cors()); // <--- AJOUTÉ ICI (Autorise toutes les origines)
 app.use(express.json());
 
 let sock;
@@ -95,7 +98,10 @@ app.post('/send-text', async (req, res) => {
     }
 
     try {
-        const jid = `${number}@s.whatsapp.net`;
+        // Nettoyage basique du numéro (enlève le + si présent)
+        const cleanNumber = number.replace('+', '');
+        const jid = `${cleanNumber}@s.whatsapp.net`;
+        
         await sock.sendMessage(jid, { text: message });
         res.json({ status: 'success', message: 'Message sent' });
     } catch (error) {

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+  <body>
+    <h1>Test API WhatsApp</h1>
+    <button onclick="envoyerMessage()">Envoyer Test</button>
+    <div id="resultat"></div>
+
+    <script>
+      function envoyerMessage() {
+        fetch("http://localhost:3001/send-text", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            number: "33611309743",
+            message: "Salut Lamine ! Ça marche ! 🚀",
+          }),
+        })
+          .then((response) => response.json())
+          .then((data) => {
+            console.log("Réponse:", data);
+            document.getElementById("resultat").innerText =
+              JSON.stringify(data);
+            alert("Message envoyé !");
+          })
+          .catch((error) => {
+            console.error("Erreur:", error);
+            document.getElementById("resultat").innerText = "Erreur: " + error;
+          });
+      }
+    </script>
+  </body>
+</html>

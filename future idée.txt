@@ -1,0 +1,63 @@
+3. "Niamey-Track" (GPS & Flotte Logistique) 🚛
+Pour Hertz ou les transporteurs locaux (bus, camions de livraison).
+
+Le Besoin : "Où est mon chauffeur ?" "Est-ce qu'il a livré le colis ?"
+
+L'App : Une interface web simple qui affiche une carte OpenStreetMap.
+
+La Tech :
+
+Traccar (Open Source, gratuit, s'installe sur ta VM en 1 clic Docker).
+
+Les chauffeurs installent l'app "Traccar Client" (gratuite) sur leur Android.
+
+Tu vends le service de "Suivi de flotte en temps réel" aux entreprises de logistique sans acheter de balises GPS coûteuses.
+
+Sous-domaine : track.nordikforge.com
+
+4. "Niamey-Immo-Bot" (Chasseur Immobilier IA) 🏠
+Le marché immo à Niamey est chaotique (WhatsApp, Facebook, bouche-à-oreille).
+
+Le Besoin : Trouver une chambre/maison sans payer 3 mois de caution aux démarcheurs véreux.
+
+L'App : Un "Scraper" qui surveille les groupes Facebook/WhatsApp "Location Niamey".
+
+La Tech :
+
+Ton n8n + ton API WhatsApp.
+
+Dès qu'une annonce correspond aux critères d'un client (ex: "Plateau, 2 chambres, < 100k"), le bot lui envoie la photo et le contact du proprio sur WhatsApp instantanément.
+
+Tu vends l'abonnement "Alerte Premium" (le client reçoit l'annonce avant tout le monde).
+
+Sous-domaine : immo.nordikforge.com
+
+5. "Niamey-Stock" (ERP Ultra-Léger pour Commerçants) 📦
+Pour les boutiques qui gèrent tout sur un cahier (épiciers, vendeurs de téléphones).
+
+Le Besoin : "Il me reste combien d'iPhone 13 ?" "J'ai vendu combien aujourd'hui ?"
+
+L'App : Pas une usine à gaz comme Odoo. Juste une grille simple (comme Excel) mais accessible sur mobile.
+
+La Tech :
+
+Baserow ou NocoDB (Open Source, clone d'Airtable, s'héberge sur ta VM).
+
+Tu leur crées une "Base" simple : Produits, Ventes, Clients.
+
+Tu connectes ça à ton API WhatsApp pour envoyer une facture PDF automatique au client après la vente.
+
+Sous-domaine : stock.nordikforge.com
+
+Résumé de ton "Empire Digital" sur la VM 136.114... :
+waha.nordikforge.com : Le moteur de communication (Ton API).
+
+app.nordikforge.com : Ta gestion Compta/Tontine.
+
+track.nordikforge.com : La gestion de flotte (Traccar).
+
+immo.nordikforge.com : Le service d'alertes (n8n webhooks).
+
+stock.nordikforge.com : La gestion de stock (NocoDB).
+
+Tu as de quoi occuper ton année 2026 et devenir le roi de la tech utile à Niamey !
