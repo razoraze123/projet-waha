@@ -14,6 +14,55 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = 3001;
+const serverStartTime = Date.now();
+
+// --- Error Codes ---
+const ErrorCodes = {
+    INVALID_NUMBER: { code: 'INVALID_NUMBER', message: 'Numéro de téléphone invalide' },
+    SESSION_NOT_FOUND: { code: 'SESSION_NOT_FOUND', message: 'Session non trouvée' },
+    SESSION_NOT_CONNECTED: { code: 'SESSION_NOT_CONNECTED', message: 'Session non connectée' },
+    MISSING_PARAMS: { code: 'MISSING_PARAMS', message: 'Paramètres manquants' },
+    SEND_FAILED: { code: 'SEND_FAILED', message: 'Échec de l\'envoi' },
+    GROUP_NOT_FOUND: { code: 'GROUP_NOT_FOUND', message: 'Groupe non trouvé' }
+};
+
+/**
+ * Valide un numéro de téléphone international
+ * @param {string} number - Le numéro à valider
+ * @returns {{ valid: boolean, cleaned: string, error?: string }}
+ */
+function validatePhoneNumber(number) {
+    if (!number) {
+        return { valid: false, cleaned: '', error: 'Numéro requis' };
+    }
+
+    // Nettoyer le numéro (garder uniquement les chiffres)
+    const cleaned = number.toString().replace(/\D/g, '');
+
+    // Vérifier la longueur (minimum 7, maximum 15 selon E.164)
+    if (cleaned.length < 7 || cleaned.length > 15) {
+        return { valid: false, cleaned, error: 'Longueur du numéro invalide (7-15 chiffres)' };
+    }
+
+    // Vérifier que le numéro ne commence pas par 0 (indicatif pays requis)
+    if (cleaned.startsWith('0')) {
+        return { valid: false, cleaned, error: 'Le numéro doit inclure l\'indicatif pays (ex: 227 pour Niger, 33 pour France)' };
+    }
+
+    return { valid: true, cleaned };
+}
+
+/**
+ * Crée une réponse d'erreur standardisée
+ */
+function errorResponse(res, statusCode, errorCode, details = null) {
+    const response = {
+        status: 'error',
+        error: errorCode,
+        ...(details && { details })
+    };
+    return res.status(statusCode).json(response);
+}
 
 // Configuration
 const SESSIONS_DIR = path.join(__dirname, 'sessions_data');
@@ -69,7 +118,7 @@ function saveSessionMetadata(sessionId, metadata) {
         fs.mkdirSync(sessionDir, { recursive: true });
     }
     const metadataPath = path.join(sessionDir, 'metadata.json');
-    
+
     // Lire les métadonnées existantes pour ne pas écraser
     let existingData = {};
     if (fs.existsSync(metadataPath)) {
@@ -147,13 +196,13 @@ async function initSession(sessionId, name = null) {
                 const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
                 const reason = lastDisconnect?.error?.output?.statusCode || lastDisconnect?.error?.message;
                 const errorDetail = lastDisconnect?.error?.toString();
-                
+
                 fileLog(`Session ${sessionId} fermée. Raison: ${reason}. Détail: ${errorDetail}`);
 
                 if (reason === DisconnectReason.loggedOut) {
-                   console.log(`Session ${sessionId} déconnectée (Log out).`);
-                   session.status = 'disconnected';
-                   session.qr = null;
+                    console.log(`Session ${sessionId} déconnectée (Log out).`);
+                    session.status = 'disconnected';
+                    session.qr = null;
                 } else {
                     console.log(`Session ${sessionId} fermée (Raison: ${reason}). Reconnexion...`);
                     if (shouldReconnect) {
@@ -181,12 +230,38 @@ async function initSession(sessionId, name = null) {
         }
     });
 
+    // Store recent messages in memory (limit to 50)
+    const receivedMessages = [];
+
+    function storeMessage(sessionId, message) {
+        const msgData = {
+            id: message.key.id,
+            sessionId,
+            from: message.key.remoteJid,
+            pushName: message.pushName,
+            timestamp: message.messageTimestamp,
+            content: message.message,
+            fromMe: message.key.fromMe
+        };
+
+        receivedMessages.unshift(msgData); // Add to beginning
+        if (receivedMessages.length > 50) {
+            receivedMessages.pop(); // Remove oldest
+        }
+    }
+
+    // ... existing code ...
+
     sock.ev.on('messages.upsert', async (m) => {
         try {
             const webhookUrl = process.env.WEBHOOK_URL;
-            if (webhookUrl && m.messages && m.messages.length > 0) {
+            if (m.messages && m.messages.length > 0) {
                 const msg = m.messages[0];
-                if (!msg.key.fromMe) {
+
+                // Store in memory for UI
+                storeMessage(sessionId, msg);
+
+                if (webhookUrl && !msg.key.fromMe) {
                     await axios.post(webhookUrl, {
                         sessionId,
                         event: 'messages.upsert',
@@ -200,6 +275,13 @@ async function initSession(sessionId, name = null) {
             console.error('Erreur processing webhook:', err);
         }
     });
+
+    // ... existing code ...
+
+    app.get('/api/messages', (req, res) => {
+        res.json(receivedMessages);
+    });
+
 
     sock.ev.on('creds.update', saveCreds);
 }
@@ -234,6 +316,76 @@ const formatJid = (number) => {
 app.get('/api/stats', (req, res) => {
     const stats = getGlobalStats();
     res.json(stats);
+});
+
+// --- Health Check Avancé ---
+app.get('/api/health', (req, res) => {
+    const uptime = Math.floor((Date.now() - serverStartTime) / 1000);
+    const memUsage = process.memoryUsage();
+
+    const connectedCount = Array.from(sessions.values()).filter(s => s.status === 'connected').length;
+    const totalSessions = sessions.size;
+
+    res.json({
+        status: 'healthy',
+        version: '1.1.0',
+        uptime: {
+            seconds: uptime,
+            formatted: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m ${uptime % 60}s`
+        },
+        memory: {
+            heapUsed: `${Math.round(memUsage.heapUsed / 1024 / 1024)} MB`,
+            heapTotal: `${Math.round(memUsage.heapTotal / 1024 / 1024)} MB`,
+            rss: `${Math.round(memUsage.rss / 1024 / 1024)} MB`
+        },
+        system: {
+            platform: os.platform(),
+            nodeVersion: process.version,
+            cpus: os.cpus().length,
+            freeMemory: `${Math.round(os.freemem() / 1024 / 1024)} MB`
+        },
+        sessions: {
+            total: totalSessions,
+            connected: connectedCount,
+            disconnected: totalSessions - connectedCount
+        },
+        timestamp: new Date().toISOString()
+    });
+});
+
+// --- Envoi Message de Groupe ---
+app.post('/api/send-group-message', async (req, res) => {
+    const { sessionId, groupId, message } = req.body;
+
+    if (!sessionId || !groupId || !message) {
+        return errorResponse(res, 400, ErrorCodes.MISSING_PARAMS, 'sessionId, groupId et message sont requis');
+    }
+
+    const session = sessions.get(sessionId);
+    if (!session || !session.sock) {
+        return errorResponse(res, 404, ErrorCodes.SESSION_NOT_FOUND);
+    }
+    if (session.status !== 'connected') {
+        return errorResponse(res, 400, ErrorCodes.SESSION_NOT_CONNECTED);
+    }
+
+    try {
+        // Formater le JID du groupe
+        const groupJid = groupId.includes('@g.us') ? groupId : `${groupId}@g.us`;
+
+        await session.sock.sendMessage(groupJid, { text: message });
+
+        updateGlobalStats(stats => ({
+            ...stats,
+            totalMessagesSent: (stats.totalMessagesSent || 0) + 1
+        }));
+
+        fileLog(`Message groupe envoyé via session ${sessionId} vers ${groupJid}`);
+        res.json({ status: 'success', message: 'Message envoyé au groupe' });
+    } catch (error) {
+        console.error('Error sending group message:', error);
+        errorResponse(res, 500, ErrorCodes.SEND_FAILED, error.toString());
+    }
 });
 
 app.get('/api/sessions', (req, res) => {
@@ -283,7 +435,7 @@ app.delete('/api/sessions/:id', async (req, res) => {
     if (session && session.sock) {
         session.sock.end(undefined);
     }
-    
+
     sessions.delete(sessionId);
 
     const sessionDir = path.join(SESSIONS_DIR, sessionId);
@@ -312,12 +464,12 @@ app.post('/api/send-message', async (req, res) => {
     try {
         const jid = formatJid(number);
         await session.sock.sendMessage(jid, { text: message });
-        
+
         updateGlobalStats(stats => ({
             ...stats,
             totalMessagesSent: (stats.totalMessagesSent || 0) + 1
         }));
-        
+
         fileLog(`Message envoyé avec succès via session ${sessionId} vers ${number}`);
         res.json({ status: 'success', message: 'Message sent' });
     } catch (error) {

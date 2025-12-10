@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, Users, FileText, Settings, LogOut } from 'lucide-react';
+import { LayoutDashboard, Users, FileText, Settings, LogOut, Zap, Inbox } from 'lucide-react';
 import { Tab } from '../types';
 
 interface SidebarProps {
@@ -12,6 +12,8 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isMobileOpen, closeMobile }) => {
   const menuItems = [
     { id: 'dashboard' as Tab, label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'features' as Tab, label: 'Fonctionnalités', icon: Zap },
+    { id: 'messages' as Tab, label: 'Messages', icon: Inbox },
     { id: 'sessions' as Tab, label: 'Sessions', icon: Users },
     { id: 'logs' as Tab, label: 'Logs', icon: FileText },
   ];
@@ -25,7 +27,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isMobileOpen
     <>
       {/* Mobile Overlay */}
       {isMobileOpen && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/50 z-20 lg:hidden backdrop-blur-sm"
           onClick={closeMobile}
         />
@@ -57,8 +59,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isMobileOpen
                 onClick={() => handleNav(item.id)}
                 className={`
                   w-full flex items-center px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group
-                  ${isActive 
-                    ? 'bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 shadow-sm' 
+                  ${isActive
+                    ? 'bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 shadow-sm'
                     : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'}
                 `}
               >

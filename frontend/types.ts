@@ -16,4 +16,4 @@ export interface LogEntry {
   message: string;
 }
 
-export type Tab = 'dashboard' | 'sessions' | 'logs';
+export type Tab = 'dashboard' | 'sessions' | 'logs' | 'features' | 'messages';
