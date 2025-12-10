@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, RefreshCw, Loader2, ScanLine } from 'lucide-react';
 
 interface NewSessionModalProps {
@@ -11,6 +11,9 @@ const NewSessionModal: React.FC<NewSessionModalProps> = ({ isOpen, onClose, onAd
   const [sessionName, setSessionName] = useState('');
   const [step, setStep] = useState<'name' | 'qr'>('name');
   const [loading, setLoading] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [qrCode, setQrCode] = useState<string | null>(null);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Reset state when modal opens
   useEffect(() => {
@@ -18,19 +21,67 @@ const NewSessionModal: React.FC<NewSessionModalProps> = ({ isOpen, onClose, onAd
       setSessionName('');
       setStep('name');
       setLoading(false);
+      setCurrentSessionId(null);
+      setQrCode(null);
+    } else {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     }
   }, [isOpen]);
 
-  if (!isOpen) return null;
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
+  }, []);
 
-  const handleNext = () => {
+  const handleCreateSession = async () => {
     if (!sessionName.trim()) return;
     setLoading(true);
-    // Simulate API call to get QR
-    setTimeout(() => {
+
+    try {
+      const res = await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: sessionName })
+      });
+
+      const data = await res.json();
+
+      if (data.status === 'success') {
+        setCurrentSessionId(data.session.id);
+        setStep('qr');
+        startPolling(data.session.id);
+      }
+    } catch (error) {
+      console.error('Failed to create session', error);
+      alert('Erreur de création de session');
+    } finally {
       setLoading(false);
-      setStep('qr');
-    }, 800);
+    }
+  };
+
+  const startPolling = (id: string) => {
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/sessions/${id}`);
+        const session = await res.json();
+
+        if (session.qr) {
+          setQrCode(session.qr);
+        }
+
+        if (session.status === 'connected') {
+          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+          onAdd(sessionName);
+          onClose();
+        }
+      } catch (error) {
+        console.error('Polling error', error);
+      }
+    }, 1500);
   };
 
   const handleFinish = () => {
@@ -52,7 +103,7 @@ const NewSessionModal: React.FC<NewSessionModalProps> = ({ isOpen, onClose, onAd
         {/* Header */}
         <div className="px-6 py-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
           <h2 className="text-lg font-semibold text-slate-100 flex items-center">
-            {step === 'name' ? 'Nouvelle Session' : 'Scannez le code'}
+            {step === 'name' ? 'Nouvelle Session' : 'Connexion WhatsApp'}
           </h2>
           <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
             <X size={20} />
@@ -78,7 +129,7 @@ const NewSessionModal: React.FC<NewSessionModalProps> = ({ isOpen, onClose, onAd
                 Donnez un nom unique pour identifier facilement ce compte WhatsApp dans votre tableau de bord.
               </p>
               <button
-                onClick={handleNext}
+                onClick={handleCreateSession}
                 disabled={!sessionName.trim() || loading}
                 className="w-full mt-4 bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-3 rounded-lg transition-all flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -89,13 +140,20 @@ const NewSessionModal: React.FC<NewSessionModalProps> = ({ isOpen, onClose, onAd
             <div className="flex flex-col items-center justify-center text-center space-y-6">
                <div className="relative group">
                   <div className="absolute -inset-0.5 bg-gradient-to-r from-indigo-500 to-emerald-500 rounded-lg blur opacity-30 group-hover:opacity-60 transition duration-1000"></div>
-                  <div className="relative bg-white p-4 rounded-lg">
-                    {/* Real QR Code API for realism */}
-                    <img 
-                      src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=NiameyAPI-Session-${sessionName}`} 
-                      alt="QR Code" 
-                      className="w-48 h-48 object-contain"
-                    />
+                  <div className="relative bg-white p-4 rounded-lg min-w-[200px] min-h-[200px] flex items-center justify-center">
+                    {qrCode ? (
+                       <img
+                       src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrCode)}`}
+                       alt="QR Code"
+                       className="w-48 h-48 object-contain"
+                     />
+                    ) : (
+                      <div className="flex flex-col items-center">
+                        <Loader2 className="animate-spin text-slate-400 mb-2" size={32} />
+                        <span className="text-slate-500 text-xs">Génération du QR...</span>
+                      </div>
+                    )}
+
                   </div>
                   {/* Scan Overlay Effect */}
                   <div className="absolute top-0 left-0 w-full h-1 bg-indigo-500/50 shadow-[0_0_15px_rgba(99,102,241,0.5)] animate-[scan_2s_ease-in-out_infinite] pointer-events-none rounded-lg" />
@@ -119,8 +177,7 @@ const NewSessionModal: React.FC<NewSessionModalProps> = ({ isOpen, onClose, onAd
                    onClick={handleFinish}
                    className="flex-1 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors text-sm font-medium flex items-center justify-center"
                  >
-                   <ScanLine size={16} className="mr-2" />
-                   J'ai scanné
+                   Fermer
                  </button>
                </div>
             </div>

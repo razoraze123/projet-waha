@@ -6,6 +6,7 @@ export interface Session {
   status: SessionStatus;
   lastActive: string;
   phoneNumber?: string;
+  qr?: string | null;
 }
 
 export interface LogEntry {
