@@ -6,6 +6,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import pino from 'pino';
 import os from 'os';
+import axios from 'axios';
+import 'dotenv/config';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -53,7 +55,6 @@ const logFile = fs.createWriteStream(path.join(__dirname, 'server.log'), { flags
 function fileLog(message) {
     const logLine = `[${new Date().toISOString()}] ${message}\n`;
     logFile.write(logLine);
-    // console.log(message); // Décommenter si on veut aussi voir dans la console
 }
 
 // Store sessions in memory (active sockets)
@@ -74,7 +75,9 @@ function saveSessionMetadata(sessionId, metadata) {
     if (fs.existsSync(metadataPath)) {
         try {
             existingData = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
-        } catch (e) {}
+        } catch (e) {
+            console.error('Erreur lors de la lecture des métadonnées :', e);
+        }
     }
 
     const newData = { ...existingData, ...metadata };
@@ -100,13 +103,11 @@ function getSessionMetadata(sessionId) {
  * Initialize a WhatsApp session
  */
 async function initSession(sessionId, name = null) {
-    // Si pas de nom fourni, essayer de le récupérer des métadonnées stockées
     if (!name) {
         const meta = getSessionMetadata(sessionId);
         name = meta.name || `Session ${sessionId}`;
     }
 
-    // Sauvegarder le nom initial si ce n'est pas déjà fait
     saveSessionMetadata(sessionId, { name, id: sessionId });
 
     const authPath = path.join(SESSIONS_DIR, sessionId, 'auth_info');
@@ -116,15 +117,13 @@ async function initSession(sessionId, name = null) {
         auth: state,
         printQRInTerminal: false,
         browser: ["Niamey API", "Chrome", "1.0.0"],
-        logger: pino({ level: "error" }), // On active les erreurs pour débugger
-        // Optimisations pour la reconnexion
+        logger: pino({ level: "error" }),
         connectTimeoutMs: 60000,
         keepAliveIntervalMs: 10000,
         emitOwnEvents: false,
         retryRequestDelayMs: 250
     });
 
-    // Update session state in memory
     sessions.set(sessionId, {
         sock,
         status: 'connecting',
@@ -151,19 +150,16 @@ async function initSession(sessionId, name = null) {
                 
                 fileLog(`Session ${sessionId} fermée. Raison: ${reason}. Détail: ${errorDetail}`);
 
-                // Ignorer les déconnexions "intentionnelles" ou logout
                 if (reason === DisconnectReason.loggedOut) {
                    console.log(`Session ${sessionId} déconnectée (Log out).`);
                    session.status = 'disconnected';
                    session.qr = null;
-                   // Optionnel: Supprimer la session ici si vous voulez qu'elle disparaisse après un logout
                 } else {
                     console.log(`Session ${sessionId} fermée (Raison: ${reason}). Reconnexion...`);
                     if (shouldReconnect) {
                         setTimeout(() => {
-                            // On relance en gardant le même nom
                             initSession(sessionId, name);
-                        }, 3000); // Délai un peu plus court
+                        }, 3000);
                     } else {
                         session.status = 'disconnected';
                     }
@@ -179,10 +175,29 @@ async function initSession(sessionId, name = null) {
                 if (userJid) {
                     const phoneNumber = userJid.split(':')[0];
                     session.phoneNumber = phoneNumber;
-                    // Persister le numéro de téléphone
                     saveSessionMetadata(sessionId, { phoneNumber });
                 }
             }
+        }
+    });
+
+    sock.ev.on('messages.upsert', async (m) => {
+        try {
+            const webhookUrl = process.env.WEBHOOK_URL;
+            if (webhookUrl && m.messages && m.messages.length > 0) {
+                const msg = m.messages[0];
+                if (!msg.key.fromMe) {
+                    await axios.post(webhookUrl, {
+                        sessionId,
+                        event: 'messages.upsert',
+                        data: m
+                    }).catch(err => {
+                        console.error(`Erreur Webhook (${webhookUrl}):`, err.message);
+                    });
+                }
+            }
+        } catch (err) {
+            console.error('Erreur processing webhook:', err);
         }
     });
 
@@ -190,6 +205,31 @@ async function initSession(sessionId, name = null) {
 }
 
 // --- API Routes ---
+
+// Helper to validate session
+function validateSession(sessionId, res) {
+    const session = sessions.get(sessionId);
+    if (!session || !session.sock) {
+        res.status(404).json({ error: 'Session not found or not initialized' });
+        return null;
+    }
+    if (session.status !== 'connected') {
+        res.status(400).json({ error: 'Session is not connected' });
+        return null;
+    }
+    return session;
+}
+
+// Helper to format JID
+const formatJid = (number) => {
+    if (!number) return null;
+    const numStr = number.toString();
+    if (numStr.includes('@')) {
+        return numStr;
+    }
+    const cleanNumber = numStr.replace(/\D/g, '');
+    return `${cleanNumber}@s.whatsapp.net`;
+};
 
 app.get('/api/stats', (req, res) => {
     const stats = getGlobalStats();
@@ -240,15 +280,12 @@ app.delete('/api/sessions/:id', async (req, res) => {
     const sessionId = req.params.id;
     const session = sessions.get(sessionId);
 
-    // 1. Fermer la connexion socket si elle existe
     if (session && session.sock) {
         session.sock.end(undefined);
     }
     
-    // 2. Supprimer de la mémoire
     sessions.delete(sessionId);
 
-    // 3. Supprimer les fichiers physiques
     const sessionDir = path.join(SESSIONS_DIR, sessionId);
     try {
         if (fs.existsSync(sessionDir)) {
@@ -269,32 +306,308 @@ app.post('/api/send-message', async (req, res) => {
         return res.status(400).json({ error: 'Missing sessionId, number, or message' });
     }
 
-    const session = sessions.get(sessionId);
-    if (!session || !session.sock) {
-        return res.status(404).json({ error: 'Session not found or not initialized' });
-    }
-
-    if (session.status !== 'connected') {
-        return res.status(400).json({ error: 'Session is not connected' });
-    }
+    const session = validateSession(sessionId, res);
+    if (!session) return;
 
     try {
-        const cleanNumber = number.replace(/\D/g, '');
-        const jid = `${cleanNumber}@s.whatsapp.net`;
-        
+        const jid = formatJid(number);
         await session.sock.sendMessage(jid, { text: message });
         
-        // Mettre à jour les stats globales
         updateGlobalStats(stats => ({
             ...stats,
             totalMessagesSent: (stats.totalMessagesSent || 0) + 1
         }));
         
-        fileLog(`Message envoyé avec succès via session ${sessionId} vers ${cleanNumber}`);
+        fileLog(`Message envoyé avec succès via session ${sessionId} vers ${number}`);
         res.json({ status: 'success', message: 'Message sent' });
     } catch (error) {
         console.error('Error sending message:', error);
         res.status(500).json({ error: 'Failed to send message', details: error.toString() });
+    }
+});
+
+// --- Chatting Actions ---
+
+// POST /api/send-image
+app.post('/api/send-image', async (req, res) => {
+    const { sessionId, number, imageUrl, caption } = req.body;
+    if (!sessionId || !number || !imageUrl) {
+        return res.status(400).json({ error: 'Missing sessionId, number, or imageUrl' });
+    }
+
+    const session = validateSession(sessionId, res);
+    if (!session) return;
+
+    try {
+        const jid = formatJid(number);
+        let msgContent = {};
+
+        if (imageUrl.startsWith('data:image') || (imageUrl.length > 1000 && !imageUrl.startsWith('http'))) {
+            const base64Str = imageUrl.startsWith('data:image') ? imageUrl.split(',')[1] : imageUrl;
+            msgContent = { image: Buffer.from(base64Str, 'base64') };
+        } else {
+            msgContent = { image: { url: imageUrl } };
+        }
+
+        msgContent.caption = caption || '';
+
+        await session.sock.sendMessage(jid, msgContent);
+
+        updateGlobalStats(stats => ({ ...stats, totalMessagesSent: (stats.totalMessagesSent || 0) + 1 }));
+        res.json({ status: 'success', message: 'Image sent' });
+    } catch (error) {
+        console.error('Error sending image:', error);
+        res.status(500).json({ error: 'Failed to send image', details: error.toString() });
+    }
+});
+
+// POST /api/send-file
+app.post('/api/send-file', async (req, res) => {
+    const { sessionId, number, fileUrl, fileName, mimetype, caption } = req.body;
+    if (!sessionId || !number || !fileUrl) {
+        return res.status(400).json({ error: 'Missing sessionId, number, or fileUrl' });
+    }
+
+    const session = validateSession(sessionId, res);
+    if (!session) return;
+
+    try {
+        const jid = formatJid(number);
+        await session.sock.sendMessage(jid, {
+            document: { url: fileUrl },
+            mimetype: mimetype || 'application/octet-stream',
+            fileName: fileName || 'file',
+            caption: caption || ''
+        });
+
+        updateGlobalStats(stats => ({ ...stats, totalMessagesSent: (stats.totalMessagesSent || 0) + 1 }));
+        res.json({ status: 'success', message: 'File sent' });
+    } catch (error) {
+        console.error('Error sending file:', error);
+        res.status(500).json({ error: 'Failed to send file', details: error.toString() });
+    }
+});
+
+// POST /api/send-voice
+app.post('/api/send-voice', async (req, res) => {
+    const { sessionId, number, audioUrl } = req.body;
+    if (!sessionId || !number || !audioUrl) {
+        return res.status(400).json({ error: 'Missing sessionId, number, or audioUrl' });
+    }
+
+    const session = validateSession(sessionId, res);
+    if (!session) return;
+
+    try {
+        const jid = formatJid(number);
+        await session.sock.sendMessage(jid, {
+            audio: { url: audioUrl },
+            ptt: true
+        });
+
+        updateGlobalStats(stats => ({ ...stats, totalMessagesSent: (stats.totalMessagesSent || 0) + 1 }));
+        res.json({ status: 'success', message: 'Voice message sent' });
+    } catch (error) {
+        console.error('Error sending voice:', error);
+        res.status(500).json({ error: 'Failed to send voice', details: error.toString() });
+    }
+});
+
+// POST /api/send-location
+app.post('/api/send-location', async (req, res) => {
+    const { sessionId, number, latitude, longitude, name, address } = req.body;
+    if (!sessionId || !number || !latitude || !longitude) {
+        return res.status(400).json({ error: 'Missing sessionId, number, latitude, or longitude' });
+    }
+
+    const session = validateSession(sessionId, res);
+    if (!session) return;
+
+    try {
+        const jid = formatJid(number);
+        await session.sock.sendMessage(jid, {
+            location: {
+                degreesLatitude: parseFloat(latitude),
+                degreesLongitude: parseFloat(longitude),
+                name: name,
+                address: address
+            }
+        });
+
+        updateGlobalStats(stats => ({ ...stats, totalMessagesSent: (stats.totalMessagesSent || 0) + 1 }));
+        res.json({ status: 'success', message: 'Location sent' });
+    } catch (error) {
+        console.error('Error sending location:', error);
+        res.status(500).json({ error: 'Failed to send location', details: error.toString() });
+    }
+});
+
+// POST /api/send-seen
+app.post('/api/send-seen', async (req, res) => {
+    const { sessionId, number, messageId, participant } = req.body;
+    if (!sessionId || !number || !messageId) {
+        return res.status(400).json({ error: 'Missing sessionId, number, or messageId' });
+    }
+
+    const session = validateSession(sessionId, res);
+    if (!session) return;
+
+    try {
+        const jid = formatJid(number);
+        const key = {
+            remoteJid: jid,
+            id: messageId,
+            fromMe: false
+        };
+        if (participant) key.participant = participant;
+
+        await session.sock.readMessages([key]);
+        res.json({ status: 'success', message: 'Marked as seen' });
+    } catch (error) {
+        console.error('Error sending seen:', error);
+        res.status(500).json({ error: 'Failed to mark as seen', details: error.toString() });
+    }
+});
+
+// POST /api/start-typing
+app.post('/api/start-typing', async (req, res) => {
+    const { sessionId, number } = req.body;
+    if (!sessionId || !number) {
+        return res.status(400).json({ error: 'Missing sessionId or number' });
+    }
+
+    const session = validateSession(sessionId, res);
+    if (!session) return;
+
+    try {
+        const jid = formatJid(number);
+        await session.sock.sendPresenceUpdate('composing', jid);
+        res.json({ status: 'success', message: 'Typing started' });
+    } catch (error) {
+        console.error('Error start typing:', error);
+        res.status(500).json({ error: 'Failed to start typing', details: error.toString() });
+    }
+});
+
+// POST /api/stop-typing
+app.post('/api/stop-typing', async (req, res) => {
+    const { sessionId, number } = req.body;
+    if (!sessionId || !number) {
+        return res.status(400).json({ error: 'Missing sessionId or number' });
+    }
+
+    const session = validateSession(sessionId, res);
+    if (!session) return;
+
+    try {
+        const jid = formatJid(number);
+        await session.sock.sendPresenceUpdate('paused', jid);
+        res.json({ status: 'success', message: 'Typing stopped' });
+    } catch (error) {
+        console.error('Error stop typing:', error);
+        res.status(500).json({ error: 'Failed to stop typing', details: error.toString() });
+    }
+});
+
+// POST /api/react
+app.post('/api/react', async (req, res) => {
+    const { sessionId, number, text, key } = req.body;
+    if (!sessionId || !number || !text || !key) {
+        return res.status(400).json({ error: 'Missing sessionId, number, text, or key' });
+    }
+
+    const session = validateSession(sessionId, res);
+    if (!session) return;
+
+    try {
+        const jid = formatJid(number);
+        const reactionKey = {
+            remoteJid: jid,
+            id: key.id || key,
+            fromMe: key.fromMe !== undefined ? key.fromMe : false
+        };
+        if (key.participant) reactionKey.participant = key.participant;
+
+        await session.sock.sendMessage(jid, {
+            react: {
+                text: text,
+                key: reactionKey
+            }
+        });
+        res.json({ status: 'success', message: 'Reaction sent' });
+    } catch (error) {
+        console.error('Error sending reaction:', error);
+        res.status(500).json({ error: 'Failed to send reaction', details: error.toString() });
+    }
+});
+
+// POST /api/check-number
+app.post('/api/check-number', async (req, res) => {
+    const { sessionId, number } = req.body;
+    if (!sessionId || !number) {
+        return res.status(400).json({ error: 'Missing sessionId or number' });
+    }
+
+    const session = validateSession(sessionId, res);
+    if (!session) return;
+
+    try {
+        const jid = formatJid(number);
+        const [result] = await session.sock.onWhatsApp(jid);
+
+        if (result && result.exists) {
+            res.json({ status: 'success', exists: true, jid: result.jid });
+        } else {
+            res.json({ status: 'success', exists: false });
+        }
+    } catch (error) {
+        console.error('Error checking number:', error);
+        res.status(500).json({ error: 'Failed to check number', details: error.toString() });
+    }
+});
+
+// GET /api/contact/profile-pic
+app.get('/api/contact/profile-pic', async (req, res) => {
+    const { sessionId, number } = req.query;
+    if (!sessionId || !number) {
+        return res.status(400).json({ error: 'Missing sessionId or number' });
+    }
+
+    const session = validateSession(sessionId, res);
+    if (!session) return;
+
+    try {
+        const jid = formatJid(number);
+        const ppUrl = await session.sock.profilePictureUrl(jid, 'image').catch(() => null);
+
+        if (ppUrl) {
+            res.json({ status: 'success', imageUrl: ppUrl });
+        } else {
+            res.status(404).json({ error: 'Profile picture not found' });
+        }
+    } catch (error) {
+        console.error('Error getting profile pic:', error);
+        res.status(500).json({ error: 'Failed to get profile pic', details: error.toString() });
+    }
+});
+
+// GET /api/groups
+app.get('/api/groups', async (req, res) => {
+    const { sessionId } = req.query;
+    if (!sessionId) {
+        return res.status(400).json({ error: 'Missing sessionId' });
+    }
+
+    const session = validateSession(sessionId, res);
+    if (!session) return;
+
+    try {
+        const groups = await session.sock.groupFetchAllParticipating();
+        const groupList = Object.keys(groups).map(key => groups[key]);
+        res.json({ status: 'success', groups: groupList });
+    } catch (error) {
+        console.error('Error fetching groups:', error);
+        res.status(500).json({ error: 'Failed to fetch groups', details: error.toString() });
     }
 });
 
@@ -317,7 +630,6 @@ function restoreSessions() {
     console.log(`Tentative de restauration de ${files.length} sessions...`);
 
     files.forEach(sessionId => {
-        // Vérifier si c'est bien un dossier
         const sessionPath = path.join(SESSIONS_DIR, sessionId);
         if (fs.statSync(sessionPath).isDirectory()) {
             initSession(sessionId).catch(err => {
