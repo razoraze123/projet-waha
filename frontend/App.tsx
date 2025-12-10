@@ -1,34 +1,55 @@
-import React, { useState } from 'react';
-import { Plus, Menu, Search, Filter, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Plus, Menu, Search, Filter } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import SessionCard from './components/SessionCard';
 import NewSessionModal from './components/NewSessionModal';
 import QuickSendForm from './components/QuickSendForm';
-import { INITIAL_SESSIONS, MOCK_LOGS } from './constants';
+import { MOCK_LOGS } from './constants';
 import { Tab, Session } from './types';
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [sessions, setSessions] = useState<Session[]>(INITIAL_SESSIONS);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const handleDeleteSession = (id: string) => {
-    if (window.confirm('Êtes-vous sûr de vouloir supprimer cette session ?')) {
-      setSessions(prev => prev.filter(s => s.id !== id));
+  // Fetch sessions
+  const fetchSessions = async () => {
+    try {
+      const res = await fetch('/api/sessions');
+      if (res.ok) {
+        const data = await res.json();
+        setSessions(data);
+      }
+    } catch (error) {
+      console.error('Error fetching sessions:', error);
     }
   };
 
-  const handleAddSession = (name: string) => {
-    const newSession: Session = {
-      id: Date.now().toString(),
-      name,
-      status: 'connected', // Simulating instant connection
-      lastActive: 'À l\'instant',
-      phoneNumber: '+227 XX XX XX XX'
-    };
-    setSessions([newSession, ...sessions]);
+  // Initial fetch and polling
+  useEffect(() => {
+    fetchSessions();
+    const interval = setInterval(fetchSessions, 2000); // Poll every 2s
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleDeleteSession = async (id: string) => {
+    if (window.confirm('Êtes-vous sûr de vouloir supprimer cette session ?')) {
+      try {
+        await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
+        // Optimistic update or wait for poll
+        setSessions(prev => prev.filter(s => s.id !== id));
+      } catch (error) {
+        console.error('Error deleting session:', error);
+        alert('Erreur lors de la suppression');
+      }
+    }
+  };
+
+  const handleAddSession = async (name: string) => {
+     // Triggered after the modal finishes the creation flow
+     fetchSessions();
   };
 
   const filteredSessions = sessions.filter(s => 
@@ -94,17 +115,17 @@ const App: React.FC = () => {
                 <div className="bg-gradient-to-br from-indigo-600 to-indigo-800 rounded-2xl p-6 text-white shadow-lg shadow-indigo-900/20">
                   <h3 className="text-indigo-100 text-sm font-medium mb-1">Sessions Actives</h3>
                   <div className="text-4xl font-bold">{sessions.filter(s => s.status === 'connected').length}</div>
-                  <p className="text-xs text-indigo-200 mt-2 bg-indigo-500/30 inline-block px-2 py-1 rounded">+2 depuis hier</p>
+                  <p className="text-xs text-indigo-200 mt-2 bg-indigo-500/30 inline-block px-2 py-1 rounded">Mise à jour auto</p>
                 </div>
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm">
                   <h3 className="text-slate-400 text-sm font-medium mb-1">Messages Envoyés</h3>
-                  <div className="text-4xl font-bold text-slate-100">1,284</div>
-                  <p className="text-xs text-emerald-400 mt-2 flex items-center"><span className="mr-1">↑</span> 12% cette semaine</p>
+                  <div className="text-4xl font-bold text-slate-100">--</div>
+                  <p className="text-xs text-emerald-400 mt-2 flex items-center">Statistiques réelles bientôt</p>
                 </div>
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm">
-                  <h3 className="text-slate-400 text-sm font-medium mb-1">Taux de Réponse</h3>
-                  <div className="text-4xl font-bold text-slate-100">98.5%</div>
-                  <p className="text-xs text-slate-500 mt-2">Temps moyen: 1.2s</p>
+                  <h3 className="text-slate-400 text-sm font-medium mb-1">État du système</h3>
+                  <div className="text-2xl font-bold text-slate-100 mt-2">En ligne</div>
+                  <p className="text-xs text-slate-500 mt-2">Backend connecté</p>
                 </div>
               </div>
 
@@ -139,14 +160,14 @@ const App: React.FC = () => {
                          <Search className="text-slate-500" size={32} />
                        </div>
                        <h3 className="text-slate-300 font-medium">Aucune session trouvée</h3>
-                       <p className="text-slate-500 text-sm mt-1">Essayez une autre recherche ou ajoutez une session.</p>
+                       <p className="text-slate-500 text-sm mt-1">Cliquez sur "Nouvelle Session" pour commencer.</p>
                     </div>
                   )}
                 </div>
 
                 {/* Right Column: Quick Test */}
                 <div className="lg:col-span-1">
-                   <QuickSendForm />
+                   <QuickSendForm sessions={sessions} />
                 </div>
               </div>
             </div>
