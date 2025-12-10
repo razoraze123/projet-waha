@@ -7,7 +7,7 @@
 > cd frontend && npm install && npm run build
 
 
-up to date, audited 70 packages in 1s
+up to date, audited 70 packages in 660ms
 
 9 packages are looking for funding
   run `npm fund` for details
@@ -25,29 +25,23 @@ transforming...
 rendering chunks...
 computing gzip size...
 dist/index.html                  2.08 kB │ gzip:  0.90 kB
-dist/assets/index-YkUepRFh.js  223.43 kB │ gzip: 68.27 kB
-✓ built in 4.24s
-node:events:497
-      throw er; // Unhandled 'error' event
-      ^
-
-Error: listen EADDRINUSE: address already in use :::3001
-    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
-    at listenInCluster (node:net:1997:12)
-    at Server.listen (node:net:2102:7)
-    at Function.listen (/app/node_modules/express/lib/application.js:635:24)
-    at file:///app/index.js:192:5
-    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
-    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:665:26)
-    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)
-Emitted 'error' event on Server instance at:
-    at emitErrorNT (node:net:1976:8)
-    at process.processTicksAndRejections (node:internal/process/task_queues:90:21) {
-  code: 'EADDRINUSE',
-  errno: -98,
-  syscall: 'listen',
-  address: '::',
-  port: 3001
-}
-
-Node.js v22.21.1
+dist/assets/index-YWHEwrDg.js  224.31 kB │ gzip: 68.57 kB
+✓ built in 3.70s
+Server listening on port 3001
+Stockage session temporaire ici : /tmp/niamey_clean_test_1765354883823
+TypeError: Converting circular structure to JSON
+    --> starting at object with constructor 'Timeout'
+    |     property '_idlePrev' -> object with constructor 'TimersList'
+    --- property '_idleNext' closes the circle
+    at JSON.stringify (<anonymous>)
+    at stringify (/app/node_modules/express/lib/response.js:1160:12)
+    at ServerResponse.json (/app/node_modules/express/lib/response.js:271:14)
+    at file:///app/index.js:98:13
+    at Layer.handle [as handle_request] (/app/node_modules/express/lib/router/layer.js:95:5)
+    at next (/app/node_modules/express/lib/router/route.js:149:13)
+    at Route.dispatch (/app/node_modules/express/lib/router/route.js:119:3)
+    at Layer.handle [as handle_request] (/app/node_modules/express/lib/router/layer.js:95:5)
+    at /app/node_modules/express/lib/router/index.js:284:15
+    at param (/app/node_modules/express/lib/router/index.js:365:14)
+QR Code généré pour la session 1765354883823 (Voir Dashboard)
+Terminated
