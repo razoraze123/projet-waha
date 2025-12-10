@@ -11,26 +11,35 @@ const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [stats, setStats] = useState<{ totalMessagesSent: number }>({ totalMessagesSent: 0 });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Fetch sessions
-  const fetchSessions = async () => {
+  // Fetch sessions & stats
+  const fetchData = async () => {
     try {
-      const res = await fetch('/api/sessions');
-      if (res.ok) {
-        const data = await res.json();
+      const [sessionsRes, statsRes] = await Promise.all([
+        fetch('/api/sessions'),
+        fetch('/api/stats')
+      ]);
+
+      if (sessionsRes.ok) {
+        const data = await sessionsRes.json();
         setSessions(data);
       }
+      if (statsRes.ok) {
+        const statsData = await statsRes.json();
+        setStats(statsData);
+      }
     } catch (error) {
-      console.error('Error fetching sessions:', error);
+      console.error('Error fetching data:', error);
     }
   };
 
   // Initial fetch and polling
   useEffect(() => {
-    fetchSessions();
-    const interval = setInterval(fetchSessions, 2000); // Poll every 2s
+    fetchData();
+    const interval = setInterval(fetchData, 2000); // Poll every 2s
     return () => clearInterval(interval);
   }, []);
 
@@ -52,9 +61,10 @@ const App: React.FC = () => {
      // Triggered after the modal finishes the creation flow
      // On utilise setTimeout pour ne pas bloquer le render cycle actuel
      setTimeout(() => {
-        fetchSessions();
+        fetchData();
      }, 100);
   };
+
 
   const handleCloseModal = () => {
     console.log("Fermeture de la modale demandée.");
@@ -128,8 +138,8 @@ const App: React.FC = () => {
                 </div>
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm">
                   <h3 className="text-slate-400 text-sm font-medium mb-1">Messages Envoyés</h3>
-                  <div className="text-4xl font-bold text-slate-100">--</div>
-                  <p className="text-xs text-emerald-400 mt-2 flex items-center">Statistiques réelles bientôt</p>
+                  <div className="text-4xl font-bold text-slate-100">{stats.totalMessagesSent}</div>
+                  <p className="text-xs text-emerald-400 mt-2 flex items-center">Total global</p>
                 </div>
                 <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm">
                   <h3 className="text-slate-400 text-sm font-medium mb-1">État du système</h3>

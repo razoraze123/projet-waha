@@ -54,7 +54,14 @@ const SessionCard: React.FC<SessionCardProps> = ({ session, onDelete }) => {
             <Clock size={12} className="mr-1.5" />
             Dernière activité
           </div>
-          <span className="text-slate-300 font-medium text-sm truncate">{session.lastActive}</span>
+          <span className="text-slate-300 font-medium text-sm truncate block" title={session.lastActive}>
+            {session.lastActive ? new Date(session.lastActive).toLocaleString('fr-FR', {
+              day: 'numeric',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit'
+            }) : '--'}
+          </span>
         </div>
       </div>
 

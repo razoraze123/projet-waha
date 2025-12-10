@@ -45,3 +45,5 @@ TypeError: Converting circular structure to JSON
     at param (/app/node_modules/express/lib/router/index.js:365:14)
 QR Code généré pour la session 1765354883823 (Voir Dashboard)
 Terminated
+[2025-12-10T09:39:48.429Z] Session 1765358857508 fermée. Raison: 401. Détail: Error: Connection Failure
+[2025-12-10T09:39:48.774Z] Session 1765358150794 connectée avec succès.
