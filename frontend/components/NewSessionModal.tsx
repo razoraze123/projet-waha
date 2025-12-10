@@ -13,6 +13,7 @@ const NewSessionModal: React.FC<NewSessionModalProps> = ({ isOpen, onClose, onAd
   const [loading, setLoading] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [qrCode, setQrCode] = useState<string | null>(null);
+  const [status, setStatus] = useState<string>('initializing'); // Ajout du state status
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Reset state when modal opens
@@ -64,29 +65,53 @@ const NewSessionModal: React.FC<NewSessionModalProps> = ({ isOpen, onClose, onAd
   const startPolling = (id: string) => {
     if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
 
+    console.log(`Début du polling pour la session ${id}...`);
+
     pollIntervalRef.current = setInterval(async () => {
       try {
         const res = await fetch(`/api/sessions/${id}`);
         const session = await res.json();
+        
+        console.log(`Statut session ${id}:`, session.status);
+        setStatus(session.status); // Mise à jour du state pour l'affichage
 
         if (session.qr) {
           setQrCode(session.qr);
         }
 
         if (session.status === 'connected') {
+          console.log('✅ Session connectée ! Fermeture de la modale...');
           if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-          onAdd(sessionName);
-          onClose();
+          
+          try {
+            onAdd(sessionName);
+          } catch (e) { console.error("Erreur onAdd polling:", e); }
+
+          setTimeout(() => {
+             try {
+               onClose();
+             } catch (e) { console.error("Erreur onClose polling:", e); }
+          }, 500); // Petit délai pour être sûr
         }
       } catch (error) {
-        console.error('Polling error', error);
+        console.error('Erreur de polling:', error);
       }
-    }, 1500);
+    }, 2000);
   };
 
   const handleFinish = () => {
-    onAdd(sessionName);
-    onClose();
+    console.log("Tentative de fermeture manuelle...");
+    try {
+      onAdd(sessionName);
+    } catch (e) {
+      console.error("Erreur dans onAdd:", e);
+    }
+    
+    try {
+      onClose();
+    } catch (e) {
+      console.error("Erreur dans onClose:", e);
+    }
   };
 
   return (
@@ -157,6 +182,13 @@ const NewSessionModal: React.FC<NewSessionModalProps> = ({ isOpen, onClose, onAd
                   </div>
                   {/* Scan Overlay Effect */}
                   <div className="absolute top-0 left-0 w-full h-1 bg-indigo-500/50 shadow-[0_0_15px_rgba(99,102,241,0.5)] animate-[scan_2s_ease-in-out_infinite] pointer-events-none rounded-lg" />
+               </div>
+               
+               {/* Statut en temps réel pour debug */}
+               <div className="text-xs font-mono bg-slate-950 px-2 py-1 rounded text-slate-400">
+                  Statut actuel: <span className={status === 'connected' ? "text-emerald-400" : "text-yellow-400"}>
+                    {status || "En attente..."}
+                  </span>
                </div>
 
                <div className="space-y-2">

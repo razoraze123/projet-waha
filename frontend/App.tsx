@@ -47,9 +47,18 @@ const App: React.FC = () => {
     }
   };
 
-  const handleAddSession = async (name: string) => {
+  const handleAddSession = (name: string) => {
+     console.log("Session ajoutée, rafraîchissement de la liste...");
      // Triggered after the modal finishes the creation flow
-     fetchSessions();
+     // On utilise setTimeout pour ne pas bloquer le render cycle actuel
+     setTimeout(() => {
+        fetchSessions();
+     }, 100);
+  };
+
+  const handleCloseModal = () => {
+    console.log("Fermeture de la modale demandée.");
+    setIsModalOpen(false);
   };
 
   const filteredSessions = sessions.filter(s => 
@@ -236,7 +245,7 @@ const App: React.FC = () => {
       {/* Modal */}
       <NewSessionModal 
         isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
+        onClose={handleCloseModal} 
         onAdd={handleAddSession} 
       />
 

@@ -4,6 +4,8 @@ import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import pino from 'pino'; // <--- IMPORTE PINO
+import os from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,20 +17,21 @@ app.use(cors());
 app.use(express.json());
 
 // Store sessions in memory
-// Map<sessionId, { sock: any, status: string, qr: string | null, name: string }>
 const sessions = new Map();
 
 /**
  * Initialize a WhatsApp session
  */
 async function initSession(sessionId, name = `Session ${sessionId}`) {
-    const authPath = path.join(__dirname, `auth_info_baileys_${sessionId}`);
+    const authPath = path.join(os.tmpdir(), `niamey_clean_test_${sessionId}`);
+    console.log("Stockage session temporaire ici :", authPath);
     const { state, saveCreds } = await useMultiFileAuthState(authPath);
 
     const sock = makeWASocket({
         auth: state,
-        printQRInTerminal: false,
-        browser: ["Niamey API", "Chrome", "1.0.0"]
+        printQRInTerminal: false, // On veut le voir sur le dashboard, pas dans le terminal
+        browser: ["Niamey API", "Chrome", "1.0.0"],
+        logger: pino({ level: "silent" }) // <--- MODE SILENCIEUX ACTIVÉ 🤫
     });
 
     // Update session state
@@ -46,29 +49,33 @@ async function initSession(sessionId, name = `Session ${sessionId}`) {
 
         if (session) {
             if (qr) {
+                // On garde le QR pour l'envoyer au frontend
                 session.qr = qr;
                 session.status = 'connecting';
+                // On affiche quand même un petit log propre
+                console.log(`QR Code généré pour la session ${sessionId} (Voir Dashboard)`);
             }
 
             if (connection === 'close') {
                 const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-                console.log(`Session ${sessionId} closed. Reconnecting: ${shouldReconnect}`);
+                const reason = lastDisconnect?.error?.output?.statusCode || lastDisconnect?.error?.message;
+                console.log(`❌ Session ${sessionId} fermée. Raison: ${reason}. Reconnexion dans 5s: ${shouldReconnect}`);
 
                 if (shouldReconnect) {
-                    initSession(sessionId, name);
+                    // Ajout d'un délai pour éviter la boucle infinie rapide
+                    setTimeout(() => {
+                        initSession(sessionId, name);
+                    }, 5000);
                 } else {
                     session.status = 'disconnected';
                     session.qr = null;
-                    // Optional: Cleanup if logged out
-                    // sessions.delete(sessionId);
                 }
             } else if (connection === 'open') {
-                console.log(`Session ${sessionId} opened`);
+                console.log(`✅ Session ${sessionId} CONNECTÉE !`);
                 session.status = 'connected';
                 session.qr = null;
                 session.lastActive = new Date().toISOString();
 
-                // Try to get phone number
                 const userJid = sock.user?.id;
                 if (userJid) {
                     session.phoneNumber = userJid.split(':')[0];
@@ -82,7 +89,6 @@ async function initSession(sessionId, name = `Session ${sessionId}`) {
 
 // --- API Routes ---
 
-// Get all sessions
 app.get('/api/sessions', (req, res) => {
     const sessionList = Array.from(sessions.entries()).map(([id, session]) => ({
         id,
@@ -95,7 +101,6 @@ app.get('/api/sessions', (req, res) => {
     res.json(sessionList);
 });
 
-// Create a new session
 app.post('/api/sessions', async (req, res) => {
     const { name } = req.body;
     const sessionId = Date.now().toString();
@@ -109,7 +114,6 @@ app.post('/api/sessions', async (req, res) => {
     });
 });
 
-// Get specific session info (useful for polling QR)
 app.get('/api/sessions/:id', (req, res) => {
     const session = sessions.get(req.params.id);
     if (!session) {
@@ -125,7 +129,6 @@ app.get('/api/sessions/:id', (req, res) => {
     });
 });
 
-// Delete a session
 app.delete('/api/sessions/:id', async (req, res) => {
     const sessionId = req.params.id;
     const session = sessions.get(sessionId);
@@ -136,8 +139,7 @@ app.delete('/api/sessions/:id', async (req, res) => {
         }
         sessions.delete(sessionId);
 
-        // Remove auth folder
-        const authPath = path.join(__dirname, `auth_info_baileys_${sessionId}`);
+        const authPath = path.join(__dirname, `niamey_session_${sessionId}`);
         try {
             fs.rmSync(authPath, { recursive: true, force: true });
         } catch (e) {
@@ -150,7 +152,6 @@ app.delete('/api/sessions/:id', async (req, res) => {
     }
 });
 
-// Send message
 app.post('/api/send-message', async (req, res) => {
     const { sessionId, number, message } = req.body;
 
@@ -168,7 +169,7 @@ app.post('/api/send-message', async (req, res) => {
     }
 
     try {
-        const cleanNumber = number.replace(/\D/g, ''); // Remove non-digits
+        const cleanNumber = number.replace(/\D/g, '');
         const jid = `${cleanNumber}@s.whatsapp.net`;
         
         await session.sock.sendMessage(jid, { text: message });
@@ -179,27 +180,31 @@ app.post('/api/send-message', async (req, res) => {
     }
 });
 
-// Serve Frontend Static Files
 const frontendDist = path.join(__dirname, 'frontend/dist');
-app.use(express.static(frontendDist));
+// Vérifie si le build existe avant de le servir pour éviter le crash
+if (fs.existsSync(frontendDist)) {
+    app.use(express.static(frontendDist));
+    app.get('*', (req, res) => {
+        res.sendFile(path.join(frontendDist, 'index.html'));
+    });
+} else {
+    console.log("⚠️ Frontend build not found. Running API only mode.");
+    app.get('/', (req, res) => res.send('API Running (Frontend not built)'));
+}
 
-// Handle React Routing (return index.html for unknown routes)
-app.get('*', (req, res) => {
-    res.sendFile(path.join(frontendDist, 'index.html'));
-});
-
-// Start Server
 app.listen(port, () => {
     console.log(`Server listening on port ${port}`);
 
-    // Restore existing sessions if we had persistence logic (not implemented here for simplicity,
-    // but could scan for auth_info_baileys_* folders)
+    // Restauration automatique désactivée
+    /*
+    // Restauration des sessions
     const files = fs.readdirSync(__dirname);
     files.forEach(file => {
-        if (file.startsWith('auth_info_baileys_')) {
-            const sessionId = file.replace('auth_info_baileys_', '');
+        if (file.startsWith('niamey_session_')) {
+            const sessionId = file.replace('niamey_session_', '');
             console.log(`Restoring session ${sessionId}...`);
             initSession(sessionId, `Restored Session ${sessionId}`);
         }
     });
+    */
 });
