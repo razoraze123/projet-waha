@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, RefreshCw, Loader2, ScanLine } from 'lucide-react';
+import { X, Loader2 } from 'lucide-react';
 
 interface NewSessionModalProps {
   isOpen: boolean;
@@ -13,28 +13,89 @@ const NewSessionModal: React.FC<NewSessionModalProps> = ({ isOpen, onClose, onAd
   const [loading, setLoading] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [qrCode, setQrCode] = useState<string | null>(null);
-  const [status, setStatus] = useState<string>('initializing'); // Ajout du state status
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [status, setStatus] = useState<string>('initializing');
+
+  // Utilisation d'une ref pour suivre si le composant est monté
+  const isMounted = useRef(true);
 
   // Reset state when modal opens
   useEffect(() => {
+    isMounted.current = true;
     if (isOpen) {
       setSessionName('');
       setStep('name');
       setLoading(false);
       setCurrentSessionId(null);
       setQrCode(null);
-    } else {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
     }
+    return () => {
+      isMounted.current = false;
+    };
   }, [isOpen]);
 
-  // Clean up on unmount
+  // Polling automatique géré par un useEffect dédié
   useEffect(() => {
-    return () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    let timeoutId: NodeJS.Timeout;
+    let isActive = true;
+
+    const poll = async () => {
+      // On ne polle que si la modale est ouverte, qu'on est à l'étape QR, et qu'on a un ID
+      if (!isOpen || step !== 'qr' || !currentSessionId) return;
+
+      try {
+        console.log(`Polling status for session ${currentSessionId}...`);
+        const res = await fetch(`/api/sessions/${currentSessionId}`);
+        if (!res.ok) throw new Error('Network response was not ok');
+
+        const session = await res.json();
+        
+        // Si le composant a été démonté ou le polling désactivé pendant le fetch, on arrête
+        if (!isActive || !isMounted.current) return;
+
+        console.log(`Statut session ${currentSessionId}:`, session.status);
+        setStatus(session.status);
+
+        if (session.qr) {
+          setQrCode(session.qr);
+        }
+
+        if (session.status === 'connected') {
+          console.log('✅ Session connectée ! Fermeture de la modale...');
+          
+          try {
+            onAdd(sessionName);
+          } catch (e) { console.error("Erreur onAdd polling:", e); }
+
+          // Petit délai pour l'expérience utilisateur
+          setTimeout(() => {
+             if (isActive && isMounted.current) {
+               try {
+                 onClose();
+               } catch (e) { console.error("Erreur onClose polling:", e); }
+             }
+          }, 1000);
+
+          return; // Arrêt du polling (pas de nouveau setTimeout)
+        }
+      } catch (error) {
+        console.error('Erreur de polling:', error);
+      }
+
+      // Si toujours actif, on relance dans 1s
+      if (isActive && isMounted.current) {
+         timeoutId = setTimeout(poll, 1000);
+      }
     };
-  }, []);
+
+    if (isOpen && step === 'qr' && currentSessionId) {
+      poll();
+    }
+
+    return () => {
+      isActive = false;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [isOpen, step, currentSessionId, sessionName, onClose, onAdd]);
 
   const handleCreateSession = async () => {
     if (!sessionName.trim()) return;
@@ -49,70 +110,35 @@ const NewSessionModal: React.FC<NewSessionModalProps> = ({ isOpen, onClose, onAd
 
       const data = await res.json();
 
-      if (data.status === 'success') {
-        setCurrentSessionId(data.session.id);
-        setStep('qr');
-        startPolling(data.session.id);
+      if (isMounted.current) {
+        if (data.status === 'success') {
+          setCurrentSessionId(data.session.id);
+          setStep('qr');
+          // Le polling se lancera automatiquement grâce au useEffect
+        } else {
+            alert('Erreur: ' + (data.message || 'Impossible de créer la session'));
+        }
       }
     } catch (error) {
       console.error('Failed to create session', error);
       alert('Erreur de création de session');
     } finally {
-      setLoading(false);
+      if (isMounted.current) setLoading(false);
     }
-  };
-
-  const startPolling = (id: string) => {
-    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-
-    console.log(`Début du polling pour la session ${id}...`);
-
-    pollIntervalRef.current = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/sessions/${id}`);
-        const session = await res.json();
-        
-        console.log(`Statut session ${id}:`, session.status);
-        setStatus(session.status); // Mise à jour du state pour l'affichage
-
-        if (session.qr) {
-          setQrCode(session.qr);
-        }
-
-        if (session.status === 'connected') {
-          console.log('✅ Session connectée ! Fermeture de la modale...');
-          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-          
-          try {
-            onAdd(sessionName);
-          } catch (e) { console.error("Erreur onAdd polling:", e); }
-
-          setTimeout(() => {
-             try {
-               onClose();
-             } catch (e) { console.error("Erreur onClose polling:", e); }
-          }, 500); // Petit délai pour être sûr
-        }
-      } catch (error) {
-        console.error('Erreur de polling:', error);
-      }
-    }, 2000);
   };
 
   const handleFinish = () => {
     console.log("Tentative de fermeture manuelle...");
     try {
       onAdd(sessionName);
-    } catch (e) {
-      console.error("Erreur dans onAdd:", e);
-    }
+    } catch (e) { console.error("Erreur dans onAdd:", e); }
     
     try {
       onClose();
-    } catch (e) {
-      console.error("Erreur dans onClose:", e);
-    }
+    } catch (e) { console.error("Erreur dans onClose:", e); }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
